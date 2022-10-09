@@ -1,0 +1,88 @@
+useDotenv: true
+service: auth-awscreds-api
+
+frameworkVersion: '3'
+
+provider:
+  name: aws
+  runtime: nodejs16.x
+  region: ap-south-1
+  httpApi:
+    cors:
+      allowedOrigins:
+        - ${env:APP_DOMAIN}
+    authorizers:
+      cognitoJWTAuth:
+        identitySource: $request.header.Authorization
+        issuerUrl: https://cognito-idp.${env:AWSREGION}.amazonaws.com/${env:COGNITO_USER_POOL_ID}
+        audience:
+          - ${env:APP_CLIENT_ID}
+  
+  iam:
+    role:
+      statements:
+      - Effect: Allow
+        Action:
+          - "cognito-identity:GetId"
+        Resource:
+          - '*'
+
+  environment:
+    AWSREGION: ${env:AWSREGION}
+    COGNITO_USER_POOL_ID: ${env:COGNITO_USER_POOL_ID}
+    IDENTITY_POOL_ID: ${env:IDENTITY_POOL_ID}
+    APP_CLIENT_ID: ${env:APP_CLIENT_ID}
+    STS_EXTERNAL_ID: ${env:STS_EXTERNAL_ID}
+    COGNITOIDP: ${env:COGNITOIDP}
+    IAM_ROLE_ARN: ${env:IAM_ROLE_ARN}
+  
+  deploymentBucket:
+    name: ${env:DEPLOYMENT_BUCKET}
+    serverSideEncryption: AES256
+
+
+package:
+  patterns:
+    - '!node_modules/**'
+    - server.js
+    - package.json
+
+layers:
+  lambdaLibs:
+    path: layer
+    compatibleRuntimes:
+      - nodejs16.x
+
+functions:
+  auth-awscreds:
+    handler: server.start
+    memorySize: 256
+    timeout: 29
+    layers:
+      - {Ref: LambdaLibsLambdaLayer}
+    events:
+      - httpApi:
+          path: /auth-creds
+          method: post
+          authorizer:
+            name: cognitoJWTAuth
+
+resources:
+  Resources:
+    AuthCredsAssumeRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: "2012-10-17"
+          Statement:
+            -
+              Effect: Allow
+              Principal:
+                AWS: !GetAtt IamRoleLambdaExecution.Arn
+              Action: sts:AssumeRole
+              Condition:
+                StringEquals:
+                  sts:ExternalId: ${env:STS_EXTERNAL_ID}
+        RoleName: auth-awscreds-api
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/AdministratorAccess
